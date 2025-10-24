@@ -1,0 +1,53 @@
+
+
+services:
+  auth-service:
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+    volumes:
+      - ./src/services/auth:/app/src/services/auth
+      - ./src/models:/app/src/models
+      - ./src/middleware:/app/src/middleware
+
+  inventory-service:
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+    volumes:
+      - ./src/services/inventory:/app/src/services/inventory
+      - ./src/models:/app/src/models
+      - ./src/middleware:/app/src/middleware
+
+  order-service:
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+    volumes:
+      - ./src/services/order:/app/src/services/order
+      - ./src/models:/app/src/models
+      - ./src/middleware:/app/src/middleware
+
+  kafka-processor:
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+    volumes:
+      - ./src/services/kafka-processor:/app/src/services/kafka-processor
+
+  notifier-service:
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+    volumes:
+      - ./src/services/notifier:/app/src/services/notifier
+      - ./src/models:/app/src/models
+      - ./src/middleware:/app/src/middleware
+
+  api-gateway:
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+    volumes:
+      - ./src/gateway:/app/src/gateway
+      - ./src/middleware:/app/src/middleware

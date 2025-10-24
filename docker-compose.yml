@@ -1,0 +1,265 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: quicksale-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+      MONGO_INITDB_DATABASE: quicksale
+    volumes:
+      - mongodb_data:/data/db
+      - ./scripts/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js
+    networks:
+      - quicksale-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: quicksale-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - quicksale-network
+    healthcheck:
+      test: echo stat | nc localhost 2181
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka Message Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: quicksale-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - quicksale-network
+    healthcheck:
+      test: kafka-broker-api-versions.sh --bootstrap-server localhost:9092
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: quicksale-kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - quicksale-network
+
+  # Redis for Rate Limiting & Caching
+  redis:
+    image: redis:7-alpine
+    container_name: quicksale-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - quicksale-network
+    healthcheck:
+      test: redis-cli ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Authentication Service
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+    container_name: quicksale-auth-service
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      MONGODB_URI: mongodb+srv://netflixpgsn:netflixpgsn@cluster0.xcndh.mongodb.net/lms-demo1?retryWrites=true&w=majority&appName=Cluster0
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+      JWT_REFRESH_SECRET: your-super-secret-refresh-key-change-in-production
+      JWT_EXPIRY: 15m
+      JWT_REFRESH_EXPIRY: 7d
+    networks:
+      - quicksale-network
+    healthcheck:
+      test: curl -f http://localhost:3001/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Inventory Service
+  inventory-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.inventory
+    container_name: quicksale-inventory-service
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      MONGODB_URI: mongodb+srv://netflixpgsn:netflixpgsn@cluster0.xcndh.mongodb.net/lms-demo2?retryWrites=true&w=majority&appName=Cluster0
+      KAFKA_BROKERS: kafka:29092
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+    networks:
+      - quicksale-network
+    healthcheck:
+      test: curl -f http://localhost:3002/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Order Service
+  order-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.order
+    container_name: quicksale-order-service
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "3003:3003"
+    environment:
+      NODE_ENV: production
+      PORT: 3003
+      MONGODB_URI: mongodb+srv://netflixpgsn:netflixpgsn@cluster0.xcndh.mongodb.net/lms-demo2?retryWrites=true&w=majority&appName=Cluster0
+      KAFKA_BROKERS: kafka:29092
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+    networks:
+      - quicksale-network
+    healthcheck:
+      test: curl -f http://localhost:3003/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka Processor Service
+  kafka-processor:
+    build:
+      context: .
+      dockerfile: Dockerfile.kafka-processor
+    container_name: quicksale-kafka-processor
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: mongodb+srv://netflixpgsn:netflixpgsn@cluster0.xcndh.mongodb.net/lms-demo2?retryWrites=true&w=majority&appName=Cluster0
+      KAFKA_BROKERS: kafka:29092
+    networks:
+      - quicksale-network
+
+  # Notifier Service (WebSocket)
+  notifier-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.notifier
+    container_name: quicksale-notifier-service
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "3004:3004"
+    environment:
+      NODE_ENV: production
+      PORT: 3004
+      MONGODB_URI: mongodb+srv://netflixpgsn:netflixpgsn@cluster0.xcndh.mongodb.net/lms-demo2?retryWrites=true&w=majority&appName=Cluster0
+      KAFKA_BROKERS: kafka:29092
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+    networks:
+      - quicksale-network
+    healthcheck:
+      test: curl -f http://localhost:3004/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: quicksale-api-gateway
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+      notifier-service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+      REDIS_URL: redis://redis:6379
+      AUTH_SERVICE_URL: http://auth-service:3001
+      INVENTORY_SERVICE_URL: http://inventory-service:3002
+      ORDER_SERVICE_URL: http://order-service:3003
+      NOTIFIER_SERVICE_URL: http://notifier-service:3004
+    networks:
+      - quicksale-network
+    healthcheck:
+      test: curl -f http://localhost:3000/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongodb_data:
+  redis_data:
+
+networks:
+  quicksale-network:
+    driver: bridge

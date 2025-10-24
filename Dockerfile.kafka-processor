@@ -1,0 +1,12 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --only=production
+
+COPY src/config ./src/config
+COPY src/models ./src/models
+COPY src/services/kafka-processor ./src/services/kafka-processor
+
+CMD ["node", "src/services/kafka-processor/server.js"]

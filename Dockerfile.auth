@@ -1,0 +1,15 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --only=production
+
+COPY src/config ./src/config
+COPY src/models ./src/models
+COPY src/middleware ./src/middleware
+COPY src/services/auth ./src/services/auth
+
+EXPOSE 3001
+
+CMD ["node", "src/services/auth/server.js"]
